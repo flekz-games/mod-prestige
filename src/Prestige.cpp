@@ -196,12 +196,11 @@ PrestigeStats* LoadPrestigeStatsForPlayer(Player* player)
 
     if (prestigeStats == prestigeStatMap.end())
     {
-        prestigeStatMap.emplace(guid, loadedPrestigeStats);
+        auto [insertedIt, inserted] = prestigeStatMap.emplace(guid, loadedPrestigeStats);
+        return &insertedIt->second;
     }
-    else
-    {
-        prestigeStats->second = loadedPrestigeStats;
-    }
+
+    prestigeStats->second = loadedPrestigeStats;
     return &prestigeStats->second;
 }
 
@@ -403,10 +402,28 @@ void ApplyPrestigeStats(Player* player, PrestigeStats* prestigeStats)
                 if (stackcount256 > 0)
                 {
                     auto spellAura256 = player->AddAura(StatToSpell256[x], player);
-                    spellAura256->SetStackAmount(stackcount256);
+                    if (spellAura256)
+                    {
+                        spellAura256->SetStackAmount(stackcount256);
+                    }
+                    else
+                    {
+                        LOG_ERROR("module", "Failed to apply prestige 256-stack aura spell '{}' for player '{}' with guid '{}'.", StatToSpell256[x], player->GetName(), player->GetGUID().GetRawValue());
+                    }
                 }
-                auto spellAura1 = player->AddAura(StatToSpell[x], player);
-                spellAura1->SetStackAmount(stackcount1);
+
+                if (stackcount1 > 0)
+                {
+                    auto spellAura1 = player->AddAura(StatToSpell[x], player);
+                    if (spellAura1)
+                    {
+                        spellAura1->SetStackAmount(stackcount1);
+                    }
+                    else
+                    {
+                        LOG_ERROR("module", "Failed to apply prestige aura spell '{}' for player '{}' with guid '{}'.", StatToSpell[x], player->GetName(), player->GetGUID().GetRawValue());
+                    }
+                }
 
             }
         }
