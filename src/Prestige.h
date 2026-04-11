@@ -22,6 +22,12 @@ enum PrestigeConstants
     PRESTIGE_GOSSIP_ALLOCATE_RESISTANCE_STATS = 108,
     PRESTIGE_GOSSIP_DISPLAY_CURRENT_STATS = 109,
 
+    // Stat list entries use (PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE + StatType) to open the multi-point submenu.
+    PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE = 2000,
+    // Batch spend: action = PRESTIGE_GOSSIP_BATCH_SPEND_BASE + stat * PRESTIGE_SPEND_TIER_COUNT + tierIndex (tierIndex 0..5).
+    PRESTIGE_GOSSIP_BATCH_SPEND_BASE = 12000,
+    PRESTIGE_SPEND_TIER_COUNT = 6,
+
     PRESTIGE_NPC_TEXT_HAS_ATTRIBUTES = 441191,
     PRESTIGE_NPC_TEXT_GENERIC = 441190,
     PRESTIGE_NPC_TEXT_DISABLED = 441192,
@@ -325,6 +331,7 @@ void SavePrestigeStatsForPlayer(Player* /*player*/);
 void ApplyPrestigeStats(Player* /*player*/, PrestigeStats* /*attributes*/);
 void DisablePrestigeStats(Player* /*player*/);
 bool TryAddPrestigeStat(PrestigeStats* /*attributes*/, uint32 /*attribute*/);
+uint32 TryAddPrestigeStatAmount(PrestigeStats* /*attributes*/, uint32 /*attribute*/, uint32 /*desiredAmount*/);
 void RespecPrestigeStats(PrestigeStats* /*attributes*/);
 
 bool HasPrestigeStats(Player* /*player*/);
@@ -342,6 +349,7 @@ void PrestigeCoreStatsMenu(Player* /*player*/);
 void PrestigeSecondaryStatsMenu(Player* /*player*/);
 void PrestigeDefensiveStatsMenu(Player* /*player*/);
 void PrestigeResistanceStatsMenu(Player* /*player*/);
+void PrestigeStatSpendAmountMenu(Player* /*player*/, uint32 /*stat*/);
 
 bool ChatCommandSendMainMenu(ChatHandler* /*handler*/);
 bool ChatCommandListPrestigeStats(ChatHandler* /*handler*/);
@@ -366,7 +374,7 @@ public:
     virtual void OnPlayerLeaveCombat(Player* /*player*/) override;
     virtual void OnPlayerGossipSelect(Player* player, uint32 menu_id,
         uint32 sender, uint32 action) override;
-    void HandlePrestigeStatAllocation(Player* /*player*/, uint32 /*attribute*/, bool /*reset*/);
+    void HandlePrestigeStatAllocation(Player* /*player*/, uint32 /*attribute*/, bool /*reset*/, uint32 /*amount*/ = 1);
     std::string GetPrestigeStatName(uint32 /*attribute*/);
     virtual void OnPlayerLevelChanged(Player* /*player*/, uint8 /*oldLevel*/) override;
     virtual void OnPlayerEnterCombat(Player* /*player*/, Unit* /*enemy*/) override;

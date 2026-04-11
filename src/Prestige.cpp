@@ -1,9 +1,12 @@
 #include "Prestige.h"
 #include "Chat.h"
 #include "Config.h"
+#include "DBCEnums.h"
 #include "Spell.h"
+#include "SpellMgr.h"
 #include "Player.h"
 #include <AI/ScriptedAI/ScriptedGossip.h>
+#include <algorithm>
 
 auto& prestigeConfigSettings = PrestigeConfigSettings::Instance();
 
@@ -392,41 +395,76 @@ void SavePrestigeStatsForPlayer(Player* player)
 
 void ApplyPrestigeStats(Player* player, PrestigeStats* prestigeStats)
 {
-        for (int x = PRESTIGE_STAT_STAMINA; x<PRESTIGE_STAT_CONFIRMSPEND; ++x)
+    if (!player || !prestigeStats)
+    {
+        return;
+    }
+
+    for (int x = PRESTIGE_STAT_STAMINA; x < PRESTIGE_STAT_CONFIRMSPEND; ++x)
+    {
+        if (prestigeStats->stats[x] == 0)
         {
-            if (prestigeStats->stats[x] > 0)
+            continue;
+        }
+
+        int32 statTotal = static_cast<int32>(prestigeStats->stats[x]) * static_cast<int32>(prestigeConfigSettings.GetStatPerPoint(x));
+        int32 stackcount256 = statTotal / 256;
+        int32 stackcount1 = statTotal % 256;
+
+        if (stackcount256 > 0)
+        {
+            uint32 spellId = StatToSpell256[x];
+            if (!sSpellMgr->GetSpellInfo(spellId))
             {
-                int statTotal = prestigeStats->stats[x] * prestigeConfigSettings.GetStatPerPoint(x);
-                int stackcount256 = statTotal / 256;
-                int stackcount1 = statTotal % 256;
-                if (stackcount256 > 0)
-                {
-                    auto spellAura256 = player->AddAura(StatToSpell256[x], player);
-                    if (spellAura256)
-                    {
-                        spellAura256->SetStackAmount(stackcount256);
-                    }
-                    else
-                    {
-                        LOG_ERROR("module", "Failed to apply prestige 256-stack aura spell '{}' for player '{}' with guid '{}'.", StatToSpell256[x], player->GetName(), player->GetGUID().GetRawValue());
-                    }
-                }
+                LOG_ERROR("module", "Prestige spell '{}' is missing SpellInfo (not loaded from spell_dbc?) for player '{}' with guid '{}'.",
+                    spellId, player->GetName(), player->GetGUID().GetRawValue());
+                continue;
+            }
+            Aura* aura = player->AddAura(spellId, player);
+            if (!aura)
+            {
+                player->CastSpell(player, spellId, true);
+                aura = player->GetAura(spellId);
+            }
 
-                if (stackcount1 > 0)
-                {
-                    auto spellAura1 = player->AddAura(StatToSpell[x], player);
-                    if (spellAura1)
-                    {
-                        spellAura1->SetStackAmount(stackcount1);
-                    }
-                    else
-                    {
-                        LOG_ERROR("module", "Failed to apply prestige aura spell '{}' for player '{}' with guid '{}'.", StatToSpell[x], player->GetName(), player->GetGUID().GetRawValue());
-                    }
-                }
-
+            if (aura)
+            {
+                aura->SetStackAmount(static_cast<uint8>(stackcount256));
+            }
+            else
+            {
+                LOG_ERROR("module", "Failed to apply prestige 256-stack aura spell '{}' for player '{}' with guid '{}'.",
+                    spellId, player->GetName(), player->GetGUID().GetRawValue());
             }
         }
+
+        if (stackcount1 > 0)
+        {
+            uint32 spellId = StatToSpell[x];
+            if (!sSpellMgr->GetSpellInfo(spellId))
+            {
+                LOG_ERROR("module", "Prestige spell '{}' is missing SpellInfo (not loaded from spell_dbc?) for player '{}' with guid '{}'.",
+                    spellId, player->GetName(), player->GetGUID().GetRawValue());
+                continue;
+            }
+            Aura* aura = player->AddAura(spellId, player);
+            if (!aura)
+            {
+                player->CastSpell(player, spellId, true);
+                aura = player->GetAura(spellId);
+            }
+
+            if (aura)
+            {
+                aura->SetStackAmount(static_cast<uint8>(stackcount1));
+            }
+            else
+            {
+                LOG_ERROR("module", "Failed to apply prestige aura spell '{}' for player '{}' with guid '{}'.",
+                    spellId, player->GetName(), player->GetGUID().GetRawValue());
+            }
+        }
+    }
 }
 
 void DisablePrestigeStats(Player* player)
@@ -444,19 +482,142 @@ void DisablePrestigeStats(Player* player)
     }
 }
 
+uint32 TryAddPrestigeStatAmount(PrestigeStats* prestigeStats, uint32 statToUpdate, uint32 desiredAmount)
+{
+    if (!prestigeStats || desiredAmount == 0)
+    {
+        return 0;
+    }
+
+    uint32 maxStat = prestigeConfigSettings.GetStatMaximum(statToUpdate);
+    uint32 current = prestigeStats->stats[statToUpdate];
+    if (current >= maxStat)
+    {
+        return 0;
+    }
+
+    uint32 room = maxStat - current;
+    uint32 unalloc = prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED];
+    if (unalloc == 0)
+    {
+        return 0;
+    }
+
+    uint32 cap = (desiredAmount == UINT32_MAX) ? std::min(room, unalloc) : std::min({desiredAmount, room, unalloc});
+    if (cap == 0)
+    {
+        return 0;
+    }
+
+    prestigeStats->stats[statToUpdate] += cap;
+    prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] -= cap;
+    return cap;
+}
+
 bool TryAddPrestigeStat(PrestigeStats* prestigeStats, uint32 statToUpdate)
 {
-            if (prestigeStats->stats[statToUpdate] < prestigeConfigSettings.GetStatMaximum(statToUpdate))
-            {
-                prestigeStats->stats[statToUpdate] +=1;
-                prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] -= 1;
-                return true;
-            }
-            else
-            {
-                return false;
-            }        
-    return false;
+    return TryAddPrestigeStatAmount(prestigeStats, statToUpdate, 1) > 0;
+}
+
+static uint32 PrestigeStatOpenMenuGossipAction(uint32 stat)
+{
+    return static_cast<uint32>(PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE) + stat;
+}
+
+static bool IsPrestigeSpendableStat(uint32 stat)
+{
+    return (stat >= PRESTIGE_STAT_STAMINA && stat <= PRESTIGE_STAT_SPIRIT)
+        || (stat >= PRESTIGE_STAT_DEFENSE_RATING && stat <= PRESTIGE_STAT_RESILIENCE_RATING)
+        || (stat >= PRESTIGE_STAT_ATTACK_POWER && stat <= PRESTIGE_STAT_SPELL_POWER)
+        || (stat >= PRESTIGE_STAT_RESIST_FIRE && stat <= PRESTIGE_STAT_RESIST_ALL);
+}
+
+static uint32 GetParentMenuForPrestigeStat(uint32 stat)
+{
+    if (stat >= PRESTIGE_STAT_STAMINA && stat <= PRESTIGE_STAT_SPIRIT)
+    {
+        return PRESTIGE_GOSSIP_ALLOCATE_CORE_STATS;
+    }
+    if (stat >= PRESTIGE_STAT_ATTACK_POWER && stat <= PRESTIGE_STAT_SPELL_POWER)
+    {
+        return PRESTIGE_GOSSIP_ALLOCATE_SECONDARY_STATS;
+    }
+    if (stat >= PRESTIGE_STAT_DEFENSE_RATING && stat <= PRESTIGE_STAT_RESILIENCE_RATING)
+    {
+        return PRESTIGE_GOSSIP_ALLOCATE_DEFENSIVE_STATS;
+    }
+    if (stat >= PRESTIGE_STAT_RESIST_FIRE && stat <= PRESTIGE_STAT_RESIST_ALL)
+    {
+        return PRESTIGE_GOSSIP_ALLOCATE_RESISTANCE_STATS;
+    }
+    return PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU;
+}
+
+static uint32 PreviewPrestigeSpendAmount(PrestigeStats* ps, uint32 stat, uint32 desired)
+{
+    uint32 maxStat = prestigeConfigSettings.GetStatMaximum(stat);
+    uint32 cur = ps->stats[stat];
+    if (cur >= maxStat)
+    {
+        return 0;
+    }
+    uint32 room = maxStat - cur;
+    uint32 unalloc = ps->stats[PRESTIGE_STAT_UNALLOCATED];
+    if (desired == UINT32_MAX)
+    {
+        return std::min(room, unalloc);
+    }
+    return std::min({desired, room, unalloc});
+}
+
+void PrestigeStatSpendAmountMenu(Player* player, uint32 stat)
+{
+    if (!player)
+    {
+        return;
+    }
+
+    ClearGossipMenuFor(player);
+    auto prestigeStats = GetPrestigeStats(player);
+    if (!prestigeStats)
+    {
+        CloseGossipMenuFor(player);
+        return;
+    }
+
+    if (!IsPrestigeSpendableStat(stat))
+    {
+        CloseGossipMenuFor(player);
+        return;
+    }
+
+    player->PlayerTalkClass->GetGossipMenu().SetMenuId(PRESTIGE_MENU_ID);
+
+    std::string const statName = StatNames[stat];
+    bool const confirm = IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND);
+
+    static uint32 const tierAmounts[] = { 1, 2, 5, 10, 25, UINT32_MAX };
+    static char const* const tierLabels[] = { "+1", "+2", "+5", "+10", "+25", "Max (to cap)" };
+
+    for (uint32 tier = 0; tier < PRESTIGE_SPEND_TIER_COUNT; ++tier)
+    {
+        uint32 const batchAction = static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
+            + stat * static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT) + tier;
+        std::string const label = Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}", tierLabels[tier]);
+        if (confirm)
+        {
+            uint32 const preview = PreviewPrestigeSpendAmount(prestigeStats, stat, tierAmounts[tier]);
+            std::string const q = Acore::StringFormat("Add up to {} point(s) to {}?", preview, statName);
+            AddGossipItemFor(player, GOSSIP_ICON_DOT, label, GOSSIP_SENDER_MAIN, batchAction, q, 0, false);
+        }
+        else
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_DOT, label, GOSSIP_SENDER_MAIN, batchAction);
+        }
+    }
+
+    AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back", GOSSIP_SENDER_MAIN, GetParentMenuForPrestigeStat(stat));
+    SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_HAS_ATTRIBUTES, player->GetGUID());
 }
 
 void RespecPrestigeStats(PrestigeStats* prestigeStats)
@@ -556,11 +717,41 @@ void PrestigeWorldScript::OnAfterConfigLoad(bool reload)
         ClearPrestigeStats();
     }
 
-    prestigeConfigSettings.SetIntendedMaxLevel(sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL)); //example: 80
-    auto newMaxLevelForPrestigeCalcs = sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL)+1; //example: 81
-    sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL, newMaxLevelForPrestigeCalcs); //setting the max level to 81
-    LOG_INFO("server.loading", "Prestige system enabled! Setting the new max level to ({}). Players will be able to progress to that level, but will automatically be sent back a level when they gain it.", sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL));
-    
+    bool const prestigeEnabled = sConfigMgr->GetOption<bool>("Prestige.Enable", false);
+
+    // Intended play cap: prefer agreement between world config cache and MaxPlayerLevel from merged configs.
+    // - After a prestige bump, CONFIG_MAX_PLAYER_LEVEL is (intended+1); MaxPlayerLevel in worldserver.conf
+    //   stays at intended. min(file, world) yields intended.
+    // - If a merged module conf duplicates MaxPlayerLevel incorrectly (e.g. 81), world cache from Initialize()
+    //   is still the real cap (80) on boot; min(file, world) fixes gossip / prestige hooks.
+    // - CONFIG_MAX_PLAYER_LEVEL is not reloadable; on reload world cache can stay bumped while file says 80;
+    //   min(file, world) again yields 80.
+    uint32 const maxFromFile = sConfigMgr->GetOption<uint32>("MaxPlayerLevel", DEFAULT_MAX_LEVEL);
+    uint32 const maxFromWorld = sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL);
+    uint32 const intendedBase = std::min(maxFromFile, maxFromWorld);
+    uint8 const intendedMaxLevel = static_cast<uint8>(std::min<uint32>(intendedBase, MAX_LEVEL));
+
+    prestigeConfigSettings.SetIntendedMaxLevel(intendedMaxLevel);
+
+    if (prestigeEnabled)
+    {
+        if (intendedMaxLevel >= MAX_LEVEL)
+        {
+            LOG_ERROR("module", "Prestige: MaxPlayerLevel ({}) must be less than MAX_LEVEL ({}) to reserve one overflow level. Restoring CONFIG_MAX_PLAYER_LEVEL to {}.", intendedMaxLevel, MAX_LEVEL, maxFromFile);
+            sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL, maxFromFile);
+        }
+        else
+        {
+            sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL, static_cast<uint32>(intendedMaxLevel) + 1);
+            LOG_INFO("server.loading", "Prestige: max player level set to {} (intended cap {}, from file {}, from world cache {}). At level {} XP can award prestige.",
+                sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL), intendedMaxLevel, maxFromFile, maxFromWorld, intendedMaxLevel + 1);
+        }
+    }
+    else
+    {
+        sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL, maxFromFile);
+    }
+
     
     prestigeConfigSettings.SetStatMaximum(PRESTIGE_STAT_STAMINA, sConfigMgr->GetOption<uint32>("Prestige.Max.Stamina", 1)); 
     prestigeConfigSettings.SetStatPerPoint(PRESTIGE_STAT_STAMINA, sConfigMgr->GetOption<uint32>("Prestige.StatPerPoint.Stamina", 1));
@@ -644,7 +835,7 @@ void PrestigeWorldScript::OnAfterConfigLoad(bool reload)
     prestigeConfigSettings.SetStatPerPoint(PRESTIGE_STAT_RESIST_ALL, sConfigMgr->GetOption<uint32>("Prestige.StatPerPoint.ResistAll", 1));
 
     prestigeConfigSettings.SetResetCost(sConfigMgr->GetOption<uint32>("Prestige.ResetCost", 0));
-    prestigeConfigSettings.SetPrestigeEnabled(sConfigMgr->GetOption<bool>("Prestige.Enable", false));
+    prestigeConfigSettings.SetPrestigeEnabled(prestigeEnabled);
     prestigeConfigSettings.SetDisablePVP(sConfigMgr->GetOption<bool>("Prestige.DisablePvP", false));
     prestigeConfigSettings.SetLevelUpFormulaType(sConfigMgr->GetOption<uint16>("Prestige.LevelUpFormula.Type", 1));
     prestigeConfigSettings.SetLevelUpFormulaBase(sConfigMgr->GetOption<uint32>("Prestige.LevelUpFormula.Base", 10000));
@@ -656,11 +847,17 @@ void PrestigeWorldScript::OnAfterConfigLoad(bool reload)
 
 void PrestigePlayerScript::OnPlayerLevelChanged(Player* player, uint8 oldLevel)
 {
-    if (oldLevel == prestigeConfigSettings.GetIntendedMaxLevel() && player->GetLevel() == sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
+    if (!prestigeConfigSettings.IsPrestigeEnabled())
     {
-        LOG_INFO("module", "Player ({}) has gained a prestige level! Dropping their level back to the intended max level of ({})", player->GetName(), prestigeConfigSettings.GetIntendedMaxLevel());
+        return;
+    }
+
+    uint8 const intended = prestigeConfigSettings.GetIntendedMaxLevel();
+    if (oldLevel == intended && player->GetLevel() == intended + 1)
+    {
+        LOG_INFO("module", "Player ({}) has gained a prestige level! Dropping their level back to the intended max level of ({})", player->GetName(), intended);
         player->GiveLevel(oldLevel);
-        PrestigeLevelUp(player); 
+        PrestigeLevelUp(player);
     }
 }
 
@@ -797,19 +994,19 @@ void PrestigeCoreStatsMenu(Player* player)
 
     if (IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND))
     {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStamina, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_STAMINA, "Are you sure you want to spend your points in stamina?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStrength, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_STRENGTH, "Are you sure you want to spend your points in strength?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAgility, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_AGILITY, "Are you sure you want to spend your points in agility?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optIntellect, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_INTELLECT, "Are you sure you want to spend your points in intellect?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpirit, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPIRIT, "Are you sure you want to spend your points in spirit?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStamina, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_STAMINA), "Are you sure you want to spend your points in stamina?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStrength, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_STRENGTH), "Are you sure you want to spend your points in strength?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAgility, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_AGILITY), "Are you sure you want to spend your points in agility?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optIntellect, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_INTELLECT), "Are you sure you want to spend your points in intellect?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpirit, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPIRIT), "Are you sure you want to spend your points in spirit?", 0, false);
     }
     else
     {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStamina, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_STAMINA);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStrength, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_STRENGTH);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAgility, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_AGILITY);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optIntellect, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_INTELLECT);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpirit, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPIRIT);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStamina, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_STAMINA));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optStrength, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_STRENGTH));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAgility, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_AGILITY));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optIntellect, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_INTELLECT));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpirit, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPIRIT));
     }
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back to main menu", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
     SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_HAS_ATTRIBUTES, player->GetGUID());
@@ -884,27 +1081,27 @@ void PrestigeSecondaryStatsMenu(Player* player)
 
     if (IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND))
     { 
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ATTACK_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAttackPower, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_ATTACK_POWER, "Are you sure you want to spend your points in attack power?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPower, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPELL_POWER, "Are you sure you want to spend your points in spell power?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_CRIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optCritRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_CRIT_RATING, "Are you sure you want to spend your points in crit rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHitRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_HIT_RATING, "Are you sure you want to spend your points in hit rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_EXPERTISE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optExpertiseRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_EXPERTISE_RATING, "Are you sure you want to spend your points in expertise rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HASTE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHasteRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_HASTE_RATING, "Are you sure you want to spend your points in haste rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ARMOR_PEN_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optArmorPenRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_ARMOR_PEN_RATING, "Are you sure you want to spend your points in armor penetration rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_PENETRATION) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPen, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPELL_PENETRATION, "Are you sure you want to spend your points in spell penetration?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_MP5) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optMp5, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_MP5, "Are you sure you want to spend your points in mp5?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ATTACK_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAttackPower, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_ATTACK_POWER), "Are you sure you want to spend your points in attack power?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPower, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPELL_POWER), "Are you sure you want to spend your points in spell power?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_CRIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optCritRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_CRIT_RATING), "Are you sure you want to spend your points in crit rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHitRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_HIT_RATING), "Are you sure you want to spend your points in hit rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_EXPERTISE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optExpertiseRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_EXPERTISE_RATING), "Are you sure you want to spend your points in expertise rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HASTE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHasteRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_HASTE_RATING), "Are you sure you want to spend your points in haste rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ARMOR_PEN_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optArmorPenRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_ARMOR_PEN_RATING), "Are you sure you want to spend your points in armor penetration rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_PENETRATION) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPen, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPELL_PENETRATION), "Are you sure you want to spend your points in spell penetration?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_MP5) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optMp5, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_MP5), "Are you sure you want to spend your points in mp5?", 0, false);
     } 
     else 
     { 
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ATTACK_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAttackPower, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_ATTACK_POWER);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPower, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPELL_POWER);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_CRIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optCritRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_CRIT_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHitRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_HIT_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_EXPERTISE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optExpertiseRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_EXPERTISE_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HASTE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHasteRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_HASTE_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ARMOR_PEN_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optArmorPenRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_ARMOR_PEN_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_PENETRATION) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPen, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_SPELL_PENETRATION);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_MP5) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optMp5, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_MP5);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ATTACK_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optAttackPower, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_ATTACK_POWER));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_POWER) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPower, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPELL_POWER));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_CRIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optCritRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_CRIT_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HIT_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHitRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_HIT_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_EXPERTISE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optExpertiseRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_EXPERTISE_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_HASTE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optHasteRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_HASTE_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_ARMOR_PEN_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optArmorPenRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_ARMOR_PEN_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPELL_PENETRATION) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpellPen, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPELL_PENETRATION));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_MP5) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optMp5, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_MP5));
     }
 
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back to main menu", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
@@ -969,23 +1166,23 @@ void PrestigeDefensiveStatsMenu(Player* player)
 
     if (IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND))
     {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DEFENSE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDefenseRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_DEFENSE_RATING, "Are you sure you want to spend your points in defense rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DODGE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDodgeRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_DODGE_RATING, "Are you sure you want to spend your points in dodge rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_PARRY_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optParryRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_PARRY_RATING, "Are you sure you want to spend your points in parry rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BLOCK_RATING, "Are you sure you want to spend your points in block rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_VALUE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockValue, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BLOCK_VALUE, "Are you sure you want to spend your points in block value?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESILIENCE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResilRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESILIENCE_RATING, "Are you sure you want to spend your points in resilience rating?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BONUS_ARMOR) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBonusArmor, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BONUS_ARMOR, "Are you sure you want to spend your points in bonus armor?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DEFENSE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDefenseRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_DEFENSE_RATING), "Are you sure you want to spend your points in defense rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DODGE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDodgeRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_DODGE_RATING), "Are you sure you want to spend your points in dodge rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_PARRY_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optParryRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_PARRY_RATING), "Are you sure you want to spend your points in parry rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BLOCK_RATING), "Are you sure you want to spend your points in block rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_VALUE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockValue, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BLOCK_VALUE), "Are you sure you want to spend your points in block value?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESILIENCE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResilRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESILIENCE_RATING), "Are you sure you want to spend your points in resilience rating?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BONUS_ARMOR) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBonusArmor, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BONUS_ARMOR), "Are you sure you want to spend your points in bonus armor?", 0, false);
     }
     else
     {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DEFENSE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDefenseRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_DEFENSE_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DODGE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDodgeRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_DODGE_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_PARRY_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optParryRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_PARRY_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BLOCK_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_VALUE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockValue, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BLOCK_VALUE);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESILIENCE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResilRating, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESILIENCE_RATING);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BONUS_ARMOR) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBonusArmor, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_BONUS_ARMOR);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DEFENSE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDefenseRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_DEFENSE_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_DODGE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optDodgeRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_DODGE_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_PARRY_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optParryRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_PARRY_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BLOCK_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BLOCK_VALUE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBlockValue, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BLOCK_VALUE));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESILIENCE_RATING) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResilRating, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESILIENCE_RATING));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_BONUS_ARMOR) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optBonusArmor, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_BONUS_ARMOR));
     }
 
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back to main menu", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
@@ -1041,19 +1238,19 @@ void PrestigeResistanceStatsMenu(Player* player)
         prestigeStats->stats[PRESTIGE_STAT_RESIST_ALL] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ALL) ? "|cffFF0000(MAXED)|r" : "");
 
     if (IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND)) {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FIRE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFire, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_FIRE, "Are you sure you want to spend your points in resist fire?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FROST) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFrost, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_FROST, "Are you sure you want to spend your points in resist frost?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_NATURE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistNature, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_NATURE, "Are you sure you want to spend your points in resist nature?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_SHADOW) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistShadow, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_SHADOW, "Are you sure you want to spend your points in resist shadow?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ARCANE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistArcane, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_ARCANE, "Are you sure you want to spend your points in resist arcane?", 0, false);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ALL) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistAll, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_ALL, "Are you sure you want to spend your points in resist all?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FIRE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFire, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_FIRE), "Are you sure you want to spend your points in resist fire?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FROST) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFrost, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_FROST), "Are you sure you want to spend your points in resist frost?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_NATURE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistNature, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_NATURE), "Are you sure you want to spend your points in resist nature?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_SHADOW) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistShadow, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_SHADOW), "Are you sure you want to spend your points in resist shadow?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ARCANE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistArcane, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_ARCANE), "Are you sure you want to spend your points in resist arcane?", 0, false);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ALL) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistAll, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_ALL), "Are you sure you want to spend your points in resist all?", 0, false);
     } else {
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FIRE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFire, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_FIRE);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FROST) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFrost, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_FROST);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_NATURE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistNature, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_NATURE);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_SHADOW) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistShadow, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_SHADOW);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ARCANE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistArcane, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_ARCANE);
-        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ALL) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistAll, GOSSIP_SENDER_MAIN, PRESTIGE_STAT_RESIST_ALL);
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FIRE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFire, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_FIRE));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_FROST) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistFrost, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_FROST));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_NATURE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistNature, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_NATURE));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_SHADOW) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistShadow, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_SHADOW));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ARCANE) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistArcane, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_ARCANE));
+        if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_RESIST_ALL) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optResistAll, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_RESIST_ALL));
     }
 
         AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back to main menu", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
@@ -1116,28 +1313,32 @@ void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
         PrestigeMainMenu(player);
         return;
     }
-    if (action >= PRESTIGE_STAT_STAMINA && action <= PRESTIGE_STAT_SPIRIT)
+    if (action >= static_cast<uint32>(PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE)
+        && action < PrestigeStatOpenMenuGossipAction(static_cast<uint32>(PRESTIGE_STAT_MAX)))
     {
-        HandlePrestigeStatAllocation(player, action, false);
-        PrestigeCoreStatsMenu(player);
+        uint32 const stat = action - static_cast<uint32>(PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE);
+        if (IsPrestigeSpendableStat(stat))
+        {
+            PrestigeStatSpendAmountMenu(player, stat);
+        }
         return;
     }
-    if (action >= PRESTIGE_STAT_ATTACK_POWER && action <= PRESTIGE_STAT_SPELL_POWER)
+    if (action >= static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
+        && action < static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
+            + static_cast<uint32>(PRESTIGE_STAT_MAX) * static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT))
     {
-        HandlePrestigeStatAllocation(player, action, false);
-        PrestigeSecondaryStatsMenu(player);
-        return;
-    }
-    if (action >= PRESTIGE_STAT_DEFENSE_RATING && action <= PRESTIGE_STAT_RESILIENCE_RATING)
-    {
-        HandlePrestigeStatAllocation(player, action, false);
-        PrestigeDefensiveStatsMenu(player);
-        return;
-    }
-    if (action >= PRESTIGE_STAT_RESIST_FIRE && action <= PRESTIGE_STAT_RESIST_ALL)
-    {
-        HandlePrestigeStatAllocation(player, action, false);
-        PrestigeResistanceStatsMenu(player);
+        uint32 const rel = action - static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE);
+        uint32 const stat = rel / static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT);
+        uint32 const tier = rel % static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT);
+        if (!IsPrestigeSpendableStat(stat))
+        {
+            return;
+        }
+
+        static uint32 const tierAmounts[] = { 1, 2, 5, 10, 25, UINT32_MAX };
+        uint32 const spendAmount = tierAmounts[tier];
+        HandlePrestigeStatAllocation(player, stat, false, spendAmount);
+        PrestigeStatSpendAmountMenu(player, stat);
         return;
     }
     return;
@@ -1206,7 +1407,7 @@ void PrestigeSettingsMenu(Player* player)
     SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_GENERIC, player->GetGUID());
 }
 
-void PrestigePlayerScript::HandlePrestigeStatAllocation(Player* player, uint32 statToUpdate, bool reset)
+void PrestigePlayerScript::HandlePrestigeStatAllocation(Player* player, uint32 statToUpdate, bool reset, uint32 amount)
 {
     if (!player)
     {
@@ -1229,20 +1430,32 @@ void PrestigePlayerScript::HandlePrestigeStatAllocation(Player* player, uint32 s
     }
     else
     {
-        if (prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] < 1)
+        if (amount == 0)
         {
-            ChatHandler(player->GetSession()).SendSysMessage("You have no free attribute points to spend.");
             return;
         }
-        auto result = TryAddPrestigeStat(prestigeStats, statToUpdate);
-        if (!result)
+        uint32 const added = TryAddPrestigeStatAmount(prestigeStats, statToUpdate, amount);
+        if (added == 0)
         {
-            ChatHandler(player->GetSession()).SendSysMessage("This attribute is already at the maximum.");
+            if (prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] < 1)
+            {
+                ChatHandler(player->GetSession()).SendSysMessage("You have no free attribute points to spend.");
+            }
+            else
+            {
+                ChatHandler(player->GetSession()).SendSysMessage("This attribute is already at the maximum.");
+            }
             return;
+        }
+        if (added < amount && amount != UINT32_MAX)
+        {
+            ChatHandler(player->GetSession()).SendSysMessage(
+                Acore::StringFormat("Added {} point(s) (capped by unspent points or stat maximum).", added));
         }
     }
     DisablePrestigeStats(player);
     ApplyPrestigeStats(player, prestigeStats);
+    player->UpdateAllStats();
 }
 
 void PrestigeWorldScript::OnShutdownInitiate(ShutdownExitCode /*code*/, ShutdownMask /*mask*/)
