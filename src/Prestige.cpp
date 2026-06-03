@@ -18,15 +18,18 @@ void PrestigePlayerScript::OnPlayerLogin(Player* player)
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPrestigeEnabled())
     {
         return;
     }
+
     auto prestigeStats = LoadPrestigeStatsForPlayer(player);
     if (!prestigeStats)
     {
         return;
     }
+
     CheckForUpdatedMaxStats(player);
     ApplyPrestigeStats(player, prestigeStats);
     InitPrestigeExpTnl(player);
@@ -39,6 +42,7 @@ void CheckForUpdatedMaxStats(Player* player)
     {
         return;
     }
+
     for (int x = PRESTIGE_STAT_STAMINA; x<PRESTIGE_STAT_CONFIRMSPEND; ++x)
     {
         uint32 statMax = prestigeConfigSettings.GetStatMaximum(x);
@@ -62,10 +66,12 @@ void PrestigePlayerScript::OnPlayerLogout(Player* player)
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPrestigeEnabled())
     {
         return;
     }
+
     SavePrestigeStatsForPlayer(player);
 }
 
@@ -78,6 +84,7 @@ void AddPrestigePoint(Player* player)
         LOG_INFO("module", "Failed to get prestige stats for player '{}' with guid '{}'.", player->GetName(), player->GetGUID().GetRawValue());
         return;
     }
+
     prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] += 1;
 }
 
@@ -87,23 +94,28 @@ void PrestigePlayerScript::OnPlayerLeaveCombat(Player* player)
     {
         return;
     }
+
     if (player->IsDuringRemoveFromWorld() || !player->IsInWorld())
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPrestigeEnabled())
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPVPDisabled())
     {
         return;
     }
+
     auto prestigeStats = GetPrestigeStats(player);
     if (!prestigeStats)
     {
         return;
     }
+
     ApplyPrestigeStats(player, prestigeStats);
 }
 
@@ -121,7 +133,7 @@ void ClosePrestigeMenuInCombat(Player* player)
 }
 
 /*This is where new Prestige Stats are generated if they do not exist*/
-PrestigeStats* GetPrestigeStats(Player* player)
+PrestigeStats* GetPrestigeStats(const Player* player)
 {
     auto guid = player->GetGUID().GetRawValue();
     auto stats = prestigeStatMap.find(guid);
@@ -133,7 +145,8 @@ PrestigeStats* GetPrestigeStats(Player* player)
         {
             newPrestigeStats2.stats[x] = 0;
         }
-        newPrestigeStats2.stats[PRESTIGE_STAT_CONFIRMSPEND]=SETTING_CONFIRM_SPEND;
+
+        newPrestigeStats2.stats[PRESTIGE_STAT_CONFIRMSPEND] = SETTING_CONFIRM_SPEND;
         auto result = prestigeStatMap.emplace(guid, newPrestigeStats2);
         stats = result.first;
     }
@@ -154,6 +167,7 @@ void LoadPrestigeStats()
         LOG_ERROR("module", "Failed to load from 'character_prestige_stats' table.");
         return;
     }
+
     LOG_INFO("module", "Loading player attriboosts from 'character_prestige_stats'..");
     int count = 0;
     do
@@ -166,10 +180,12 @@ void LoadPrestigeStats()
         {
             prestigeStats.stats[x] = fields[x+1].Get<uint32>();
         }
+
         prestigeStatMap.emplace(guid, prestigeStats);
 
         count++;
-    } while (qResult->NextRow());
+    }
+    while (qResult->NextRow());
 
     LOG_INFO("module", "Loaded '{}' player prestige stats.", count);
 }
@@ -624,7 +640,7 @@ void PrestigeStatSpendAmountMenu(Player* player, uint32 stat)
 
 void RespecPrestigeStats(PrestigeStats* prestigeStats)
 {
-prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] += GetTotalPrestigeStats(prestigeStats);
+    prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] += GetTotalPrestigeStats(prestigeStats);
     for (int x = PRESTIGE_STAT_STAMINA; x<PRESTIGE_STAT_CONFIRMSPEND; ++x)
     {
         prestigeStats->stats[x]=0;
@@ -846,6 +862,8 @@ void PrestigeWorldScript::OnAfterConfigLoad(bool reload)
 
     prestigeConfigSettings.SetAddonXpIndicator(sConfigMgr->GetOption<bool>("Prestige.AddonXpIndicator", true));
 
+    prestigeConfigSettings.SetPrestigeTalentsAmount(sConfigMgr->GetOption<uint16>("Prestige.Talents", 0));
+
     LoadPrestigeStats();
 }
 
@@ -876,7 +894,9 @@ void PrestigePlayerScript::OnPlayerLevelChanged(Player* player, uint8 oldLevel)
 
     uint8 const intended = prestigeConfigSettings.GetIntendedMaxLevel();
     if (oldLevel < intended && player->GetLevel() == intended)
+    {
         InitPrestigeExpTnl(player);
+    }
 }
 
 void PrestigeLevelUp(Player* player)
@@ -973,7 +993,8 @@ void SchedulePrestigeXpAddonUpdate(Player* player)
         {
             SendPrestigeXpAddonUpdate(player);
         }
-    }, Milliseconds(1));
+    },
+    Milliseconds(1));
 }
 
 void PrestigePlayerScript::OnPlayerGiveXP(Player* player, uint32& /*amount*/, Unit* /*victim*/, uint8 /*xpSource*/)
@@ -982,16 +1003,32 @@ void PrestigePlayerScript::OnPlayerGiveXP(Player* player, uint32& /*amount*/, Un
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPrestigeEnabled() || !prestigeConfigSettings.IsAddonXpIndicatorEnabled())
     {
         return;
     }
+
     if (player->GetLevel() != prestigeConfigSettings.GetIntendedMaxLevel())
     {
         return;
     }
 
     SchedulePrestigeXpAddonUpdate(player);
+}
+
+
+void PrestigePlayerScript::OnPlayerCalculateTalentsPoints(Player const* player, uint32& talentPointsForLevel)
+{
+    if (!prestigeConfigSettings.IsPrestigeEnabled() || !prestigeConfigSettings.CanAddPrestigeTalents())
+    {
+        return;
+    }
+
+    if (const auto prestigeStats = GetPrestigeStats(player))
+    {
+        talentPointsForLevel = talentPointsForLevel + (prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL] * prestigeConfigSettings.GetPrestigeTalentsAmount());
+    }
 }
 
 /*currently has no additional functionality. Included for future updates*/

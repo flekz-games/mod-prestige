@@ -94,12 +94,15 @@ enum PrestigeConstants
     STAT_SPELL_RESIST_ARCANE_256 = 90052,
     STAT_SPELL_RESIST_ALL_256 = 90053
 };
+
 struct PrestigeStatData
 {
     uint32 maxValue;
     uint32 statPerPoint;
 };
-enum StatType {
+
+enum StatType
+{
     PRESTIGE_STAT_PRESTIGELEVEL,
     PRESTIGE_STAT_UNALLOCATED,
     PRESTIGE_STAT_STAMINA,
@@ -135,79 +138,88 @@ enum StatType {
     PRESTIGE_STAT_CONFIRMSPEND,
     PRESTIGE_STAT_MAX
 };
+
 struct PrestigeStats
 {
     uint32 stats[PRESTIGE_STAT_MAX];
 };
+
 struct PrestigeConfigSettings
 {
-    private:
+private:
+    PrestigeStatData StatProperties[PRESTIGE_STAT_MAX];
+    uint8 _intendedMaxLevel;
+    uint32 _resetCost;
+    bool _prestigeEnable;
+    bool _disablePVP;
+    uint8 _levelUpFormulaType;
+    uint32 _levelUpFormulaBase;
+    uint16 _levelUpFormulaR;
+    uint16 _levelUpFormulaK;
+    bool _addonXpIndicator;
+    uint8 _prestigeTalents;
 
-        PrestigeStatData StatProperties[PRESTIGE_STAT_MAX];
-        uint8 _intendedMaxLevel;
-        uint32 _resetCost;
-        bool _prestigeEnable;
-        bool _disablePVP;
-        uint8 _levelUpFormulaType;
-        uint32 _levelUpFormulaBase;
-        uint16 _levelUpFormulaR;
-        uint16 _levelUpFormulaK;
-        bool _addonXpIndicator;
+    PrestigeConfigSettings() = default;
+    PrestigeConfigSettings(const PrestigeConfigSettings&) = delete;
+    PrestigeConfigSettings& operator=(const PrestigeConfigSettings&) = delete;
 
-        PrestigeConfigSettings() = default;
-        PrestigeConfigSettings(const PrestigeConfigSettings&) = delete;
-        PrestigeConfigSettings& operator=(const PrestigeConfigSettings&) = delete;
-    public:
-        static PrestigeConfigSettings& Instance()
-        {
-            static PrestigeConfigSettings instance;
-            return instance;
-        }
-        uint32 GetStatMaximum(size_t index)
-        {
-            return StatProperties[index].maxValue;
-        }
-        uint32 GetStatPerPoint(size_t index)
-        {
-            return StatProperties[index].statPerPoint;
-        }
-        void SetStatMaximum(size_t index, uint32 value)
-        {
-            StatProperties[index].maxValue = value;
-        }
-        void SetStatPerPoint(size_t index, uint32 value)
-        {
-            StatProperties[index].statPerPoint = value;
-        }
+public:
+    static PrestigeConfigSettings& Instance()
+    {
+        static PrestigeConfigSettings instance;
+        return instance;
+    }
+    uint32 GetStatMaximum(size_t index)
+    {
+        return StatProperties[index].maxValue;
+    }
+    uint32 GetStatPerPoint(size_t index)
+    {
+        return StatProperties[index].statPerPoint;
+    }
+    void SetStatMaximum(size_t index, uint32 value)
+    {
+        StatProperties[index].maxValue = value;
+    }
+    void SetStatPerPoint(size_t index, uint32 value)
+    {
+        StatProperties[index].statPerPoint = value;
+    }
 
-        uint8 GetIntendedMaxLevel() const { return _intendedMaxLevel; }
-        void SetIntendedMaxLevel(uint8 value) { _intendedMaxLevel = value; }
+    uint8 GetIntendedMaxLevel() const { return _intendedMaxLevel; }
+    void SetIntendedMaxLevel(uint8 value) { _intendedMaxLevel = value; }
 
-        uint32 GetResetCost() const { return _resetCost; }
-        void SetResetCost(uint32 value) { _resetCost = value; }
+    uint32 GetResetCost() const { return _resetCost; }
+    void SetResetCost(uint32 value) { _resetCost = value; }
 
-        bool IsPrestigeEnabled() const { return _prestigeEnable; }
-        void SetPrestigeEnabled(bool value) { _prestigeEnable = value; }
+    bool IsPrestigeEnabled() const { return _prestigeEnable; }
+    void SetPrestigeEnabled(bool value) { _prestigeEnable = value; }
 
-        bool IsPVPDisabled() const { return _disablePVP; }
-        void SetDisablePVP(bool value) { _disablePVP = value; }  
+    bool IsPVPDisabled() const { return _disablePVP; }
+    void SetDisablePVP(bool value) { _disablePVP = value; }  
 
-        uint8 GetLevelUpFormualType() const { return _levelUpFormulaType; }
-        void SetLevelUpFormulaType(uint8 value) { _levelUpFormulaType = value; }
+    uint8 GetLevelUpFormualType() const { return _levelUpFormulaType; }
+    void SetLevelUpFormulaType(uint8 value) { _levelUpFormulaType = value; }
 
-        uint32 GetLevelUpFormulaBase() const { return _levelUpFormulaBase; }
-        void SetLevelUpFormulaBase(uint32 value) { _levelUpFormulaBase = value; }
+    uint32 GetLevelUpFormulaBase() const { return _levelUpFormulaBase; }
+    void SetLevelUpFormulaBase(uint32 value) { _levelUpFormulaBase = value; }
 
-        uint16 GetLevelUpFormulaR() const { return _levelUpFormulaR; }
-        void SetLevelUpFormulaR(uint16 value) { _levelUpFormulaR = value; }
+    uint16 GetLevelUpFormulaR() const { return _levelUpFormulaR; }
+    void SetLevelUpFormulaR(uint16 value) { _levelUpFormulaR = value; }
         
-        uint16 GetLevelUpFormulaK() const { return _levelUpFormulaK; }
-        void SetLevelUpFormulaK(uint16 value) { _levelUpFormulaK = value; }
+    uint16 GetLevelUpFormulaK() const { return _levelUpFormulaK; }
+    void SetLevelUpFormulaK(uint16 value) { _levelUpFormulaK = value; }
 
-        bool IsAddonXpIndicatorEnabled() const { return _addonXpIndicator; }
-        void SetAddonXpIndicator(bool value) { _addonXpIndicator = value; }
+    bool IsAddonXpIndicatorEnabled() const { return _addonXpIndicator; }
+    void SetAddonXpIndicator(bool value) { _addonXpIndicator = value; }
+
+    bool CanAddPrestigeTalents() const { return _prestigeTalents > 0; }
+    uint8 GetPrestigeTalentsAmount() const { return _prestigeTalents; }
+    void SetPrestigeTalentsAmount(uint8 value) { _prestigeTalents = value; }
 };
-const char* StatNames[PRESTIGE_STAT_MAX] = {
+
+const char* StatNames[PRESTIGE_STAT_MAX] =
+{
     "Prestige Level", // STAT_PRESTIGELEVEL
     "Unallocated",    // STAT_UNALLOCATED
     "Stamina",        // PRESTIGE_STAT_STAMINA
@@ -242,10 +254,8 @@ const char* StatNames[PRESTIGE_STAT_MAX] = {
     "Resist All"      // PRESTIGE_STAT_RESIST_ALL
 };
 
-
-
-
-const uint32 StatToSpell[PRESTIGE_STAT_MAX] = {
+const uint32 StatToSpell[PRESTIGE_STAT_MAX] =
+{
     0,                           // STAT_PRESTIGELEVEL
     0,                           // STAT_UNALLOCATED
     STAT_SPELL_STAMINA,          // PRESTIGE_STAT_STAMINA
@@ -281,7 +291,8 @@ const uint32 StatToSpell[PRESTIGE_STAT_MAX] = {
     0                            
 };
 
-const uint32 StatToSpell256[PRESTIGE_STAT_MAX] = {
+const uint32 StatToSpell256[PRESTIGE_STAT_MAX] =
+{
     0,                                // STAT_PRESTIGELEVEL
     0,                                // STAT_UNALLOCATED
     STAT_SPELL_STAMINA_256,           // PRESTIGE_STAT_STAMINA
@@ -317,16 +328,12 @@ const uint32 StatToSpell256[PRESTIGE_STAT_MAX] = {
     0                                 // PRESTIGE_STAT_CONFIRMSPEND
 };
 
-
-
-
 PrestigeStatData prestigeStatData[PRESTIGE_STAT_MAX];
-
 
 std::unordered_map<uint64, PrestigeStats> prestigeStatMap;
 
 void AddPrestigePoint(Player* /*player*/);
-PrestigeStats* GetPrestigeStats(Player* /*player*/);
+PrestigeStats* GetPrestigeStats(const Player* /*player*/);
 void ClearPrestigeStats();
 void LoadPrestigeStats();
 PrestigeStats* LoadPrestigeStatsForPlayer(Player* /*player*/);
@@ -378,14 +385,14 @@ public:
     virtual void OnPlayerLogin(Player* /*player*/) override;
     virtual void OnPlayerLogout(Player* /*player*/) override;
     virtual void OnPlayerLeaveCombat(Player* /*player*/) override;
-    virtual void OnPlayerGossipSelect(Player* player, uint32 menu_id,
-        uint32 sender, uint32 action) override;
+    virtual void OnPlayerGossipSelect(Player* player, uint32 menu_id, uint32 sender, uint32 action) override;
     void HandlePrestigeStatAllocation(Player* /*player*/, uint32 /*attribute*/, bool /*reset*/, uint32 /*amount*/ = 1);
     std::string GetPrestigeStatName(uint32 /*attribute*/);
     virtual bool OnPlayerCanGiveLevel(Player* /*player*/, uint8 /*newLevel*/) override;
     virtual void OnPlayerLevelChanged(Player* /*player*/, uint8 /*oldLevel*/) override;
     virtual void OnPlayerEnterCombat(Player* /*player*/, Unit* /*enemy*/) override;
     void OnPlayerGiveXP(Player* /*player*/, uint32& /*amount*/, Unit* /*victim*/, uint8 /*xpSource*/) override;
+    void OnPlayerCalculateTalentsPoints(Player const* player, uint32& talentPointsForLevel) override;
 };
 
 class PrestigeUnitScript : public UnitScript
@@ -409,6 +416,7 @@ public:
     virtual void OnAfterConfigLoad(bool /*reload*/) override;
     virtual void OnShutdownInitiate(ShutdownExitCode /*code*/, ShutdownMask /*mask*/) override;
 };
+
 using namespace Acore::ChatCommands;
 class PrestigeCommand : public CommandScript
 {

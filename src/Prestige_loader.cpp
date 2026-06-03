@@ -1,6 +1,6 @@
 void SC_AddPrestigeScripts();
 
-void AddPrestigeScripts()
+void Addmod_prestigeScripts()
 {
     SC_AddPrestigeScripts();
 }

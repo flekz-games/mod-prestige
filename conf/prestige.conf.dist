@@ -156,3 +156,13 @@ Prestige.LevelUpFormula.r = 1
 #        Default:     5
 #    
 Prestige.LevelUpFormula.k = 1
+
+########################################
+# Prestige Talents
+########################################
+#
+#    Prestige.Talents
+#        Description: Give the amount of talent points per prestige level gained
+#		 Default: 0
+#
+Prestige.Talents = 0
