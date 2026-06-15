@@ -392,6 +392,7 @@ public:
 
     virtual void OnPlayerLogin(Player* /*player*/) override;
     virtual void OnPlayerLogout(Player* /*player*/) override;
+    virtual void OnPlayerDelete(ObjectGuid /*guid*/, uint32 /*accountId*/) override;
     virtual void OnPlayerLeaveCombat(Player* /*player*/) override;
     virtual void OnPlayerGossipSelect(Player* player, uint32 menu_id, uint32 sender, uint32 action) override;
     void HandlePrestigeStatAllocation(Player* /*player*/, uint32 /*attribute*/, bool /*reset*/, uint32 /*amount*/ = 1);
