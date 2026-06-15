@@ -10,11 +10,14 @@
 #include <AI/ScriptedAI/ScriptedGossip.h>
 #include <algorithm>
 
+#include "PlayerbotMgr.h"
+#include "PlayerbotAI.h"
+
 auto& prestigeConfigSettings = PrestigeConfigSettings::Instance();
 
 void PrestigePlayerScript::OnPlayerLogin(Player* player)
 {
-    if (!player)
+    if (!player || IsBot(player))
     {
         return;
     }
@@ -31,6 +34,7 @@ void PrestigePlayerScript::OnPlayerLogin(Player* player)
     }
 
     CheckForUpdatedMaxStats(player);
+    ApplyReverseCharacterBaseStats(player);
     ApplyPrestigeStats(player, prestigeStats);
     InitPrestigeExpTnl(player);
 }
@@ -62,7 +66,7 @@ void CheckForUpdatedMaxStats(Player* player)
 
 void PrestigePlayerScript::OnPlayerLogout(Player* player)
 {
-    if (!player)
+    if (!player || IsBot(player))
     {
         return;
     }
@@ -76,7 +80,7 @@ void PrestigePlayerScript::OnPlayerLogout(Player* player)
 }
 
 /*called when a player gains a prestige level via onlevelchanged, kept seperate incase we decide to have bonuses outside of prestige level*/
-void AddPrestigePoint(Player* player)
+void ChangePrestigePoints(Player* player, int32 points)
 {
     auto prestigeStats = GetPrestigeStats(player);
     if (!prestigeStats)
@@ -85,12 +89,51 @@ void AddPrestigePoint(Player* player)
         return;
     }
 
-    prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] += 1;
+    int32 totalUnallocatedPoints = prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED];
+    if (points >= 0)
+    {
+        totalUnallocatedPoints += points;
+    }
+    else
+    {
+        int32 remainingUnallocatedPoints = totalUnallocatedPoints + points;
+        if (remainingUnallocatedPoints >= 0)
+        {
+            totalUnallocatedPoints = remainingUnallocatedPoints;
+        }
+        else
+        {
+            totalUnallocatedPoints = 0;
+
+            // We need to remove the allocated points
+            while (remainingUnallocatedPoints != 0)
+            {
+                for (int i = PRESTIGE_STAT_STAMINA; i < PRESTIGE_STAT_CONFIRMSPEND; ++i)
+                {
+                    if (prestigeStats->stats[i] > 0)
+                    {
+                        prestigeStats->stats[i] -= 1;
+                        remainingUnallocatedPoints += 1;
+                    }
+
+                    if (remainingUnallocatedPoints == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            DisablePrestigeStats(player);
+            ApplyPrestigeStats(player, prestigeStats);
+        }
+    }
+
+    prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED] = totalUnallocatedPoints;
 }
 
 void PrestigePlayerScript::OnPlayerLeaveCombat(Player* player)
 {
-    if (!player)
+    if (!player || IsBot(player))
     {
         return;
     }
@@ -130,6 +173,25 @@ void ClosePrestigeMenuInCombat(Player* player)
     {
         CloseGossipMenuFor(player);
     }
+}
+
+
+bool IsBot(const Player* player)
+{
+    WorldSession* session = player ? player->GetSession() : nullptr;
+    if (session && session->IsBot())
+    {
+        /*
+        if (PlayerbotAI* botAI = sPlayerbotsMgr.GetPlayerbotAI(const_cast<Player*>(player)))
+        {
+            return !botAI->IsAlt();
+        }
+        */
+
+        return true;
+    }
+
+    return false;
 }
 
 /*This is where new Prestige Stats are generated if they do not exist*/
@@ -411,6 +473,52 @@ void SavePrestigeStatsForPlayer(Player* player)
 }
 
 
+void ApplyReverseCharacterBaseStats(Player* player)
+{
+    if (!player)
+    {
+        return;
+    }
+
+    // Remove previous reverse auras
+    for (uint32 auraID = STAT_SPELL_STAMINA_NEGATIVE; auraID < STAT_SPELL_SPIRIT_NEGATIVE + 1; auraID++)
+        player->RemoveAura(auraID);
+
+    // Apply as much reverse aura stacks as base points
+    PlayerLevelInfo info;
+    sObjectMgr->GetPlayerLevelInfo(player->getRace(true), player->getClass(), player->GetLevel(), &info);
+
+    for (uint8 i = STAT_STRENGTH; i < MAX_STATS; ++i)
+    {
+        const int32 minStatAmount = 5;
+        const int32 statAmount = static_cast<int32>(info.stats[i]);
+        const int32 stackAmount = std::max(statAmount - minStatAmount, minStatAmount);
+
+        uint32 auraID;
+        switch (i)
+        {
+            case STAT_STRENGTH:     auraID = STAT_SPELL_STRENGTH_NEGATIVE;  break;
+            case STAT_AGILITY:      auraID = STAT_SPELL_AGILITY_NEGATIVE;   break;
+            case STAT_STAMINA:      auraID = STAT_SPELL_STAMINA_NEGATIVE;   break;
+            case STAT_INTELLECT:    auraID = STAT_SPELL_INTELLECT_NEGATIVE; break;
+            case STAT_SPIRIT:       auraID = STAT_SPELL_SPIRIT_NEGATIVE;    break;
+            default:                                                        break;
+        }
+
+        Aura* aura = player->AddAura(auraID, player);
+        if (!aura)
+        {
+            player->CastSpell(player, auraID, true);
+            aura = player->GetAura(auraID);
+        }
+
+        if (aura)
+        {
+            aura->SetStackAmount(static_cast<uint8>(stackAmount));
+        }
+    }
+}
+
 void ApplyPrestigeStats(Player* player, PrestigeStats* prestigeStats)
 {
     if (!player || !prestigeStats)
@@ -619,8 +727,7 @@ void PrestigeStatSpendAmountMenu(Player* player, uint32 stat)
 
     for (uint32 tier = 0; tier < PRESTIGE_SPEND_TIER_COUNT; ++tier)
     {
-        uint32 const batchAction = static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
-            + stat * static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT) + tier;
+        uint32 const batchAction = static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE) + stat * static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT) + tier;
         std::string const label = Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}", tierLabels[tier]);
         if (confirm)
         {
@@ -869,37 +976,64 @@ void PrestigeWorldScript::OnAfterConfigLoad(bool reload)
 
 bool PrestigePlayerScript::OnPlayerCanGiveLevel(Player* player, uint8 newLevel)
 {
-    if (!player || !prestigeConfigSettings.IsPrestigeEnabled())
+    if (!player || IsBot(player) || !prestigeConfigSettings.IsPrestigeEnabled())
     {
         return true;
     }
 
-    uint8 const intended = prestigeConfigSettings.GetIntendedMaxLevel();
-    if (newLevel != intended + 1 || player->GetLevel() != intended)
+    auto prestigeStats = GetPrestigeStats(player);
+    if (!prestigeStats)
     {
+        LOG_INFO("module", "Failed to get prestige stats for player '{}' with guid '{}'.", player->GetName(), player->GetGUID().GetRawValue());
         return true;
     }
 
-    LOG_INFO("module", "Player ({}) has gained a prestige level at the intended max level of ({})", player->GetName(), intended);
-    PrestigeLevelUp(player);
-    return false;
+    bool prestigeLevelChange = false;
+    uint8 oldLevel = player->GetLevel();
+    const bool levelUp = newLevel > oldLevel;
+    const uint8 intendedMaxLevel = prestigeConfigSettings.GetIntendedMaxLevel();
+
+    if (oldLevel == intendedMaxLevel)
+    {
+        if (levelUp)
+        {
+            oldLevel = oldLevel + prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL];
+            newLevel = oldLevel + 1;
+            prestigeLevelChange = true;
+        }
+        else if (prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL] > 0)
+        {
+            oldLevel = oldLevel + prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL];
+            newLevel = oldLevel - 1;
+            prestigeLevelChange = true;
+        }
+    }
+
+    if (prestigeLevelChange)
+    {
+        LOG_INFO("module", "Player ({}) has gained a prestige level at the intended max level of ({})", player->GetName(), intendedMaxLevel);
+        PrestigeLevelChange(player, oldLevel, newLevel);
+        return false;
+    }
+    else
+    {
+        return true;
+    }
 }
 
 void PrestigePlayerScript::OnPlayerLevelChanged(Player* player, uint8 oldLevel)
 {
-    if (!player || !prestigeConfigSettings.IsPrestigeEnabled())
+    if (!player || IsBot(player) || !prestigeConfigSettings.IsPrestigeEnabled())
     {
         return;
     }
 
-    uint8 const intended = prestigeConfigSettings.GetIntendedMaxLevel();
-    if (oldLevel < intended && player->GetLevel() == intended)
-    {
-        InitPrestigeExpTnl(player);
-    }
+    ApplyReverseCharacterBaseStats(player);
+
+    PrestigeLevelChange(player, oldLevel, player->GetLevel());
 }
 
-void PrestigeLevelUp(Player* player)
+void PrestigeLevelChange(Player* player, uint8 oldLevel, uint8 newLevel)
 {
     auto prestigeStats = GetPrestigeStats(player);
     if (!prestigeStats)
@@ -907,11 +1041,45 @@ void PrestigeLevelUp(Player* player)
         LOG_INFO("module", "Failed to get prestige stats for player '{}' with guid '{}'.", player->GetName(), player->GetGUID().GetRawValue());
         return;
     }
-    prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL] += 1;
-    player->CastSpell(player, 47292, true); //doesn't play levelup visual by default when bouncing up and down levels
-    AddPrestigePoint(player);
-    ChatHandler(player->GetSession()).PSendSysMessage("You have gained Prestige Level {}!", prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL]);
-    InitPrestigeExpTnl(player);
+
+    const bool levelUp = newLevel > oldLevel;
+    const uint8 intendedMaxLevel = prestigeConfigSettings.GetIntendedMaxLevel();
+
+    int32 attributesEarned = 0;
+
+    // Update the level experience bar
+    if (newLevel >= intendedMaxLevel)
+    {
+        InitPrestigeExpTnl(player);
+    }
+
+    // Prestige levels
+    if (oldLevel >= intendedMaxLevel && newLevel >= intendedMaxLevel)
+    {
+        const int8 prestigeLevelChange = newLevel - oldLevel;
+        player->CastSpell(player, 47292, true);
+        prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL] += prestigeLevelChange;
+        attributesEarned += prestigeLevelChange * 10;
+    }
+    // Normal levels
+    else
+    {
+        // Calculate amount of attribute points earned this level
+        PlayerLevelInfo oldLevelInfo, newLevelInfo;
+        sObjectMgr->GetPlayerLevelInfo(player->getRace(true), player->getClass(), oldLevel, &oldLevelInfo);
+        sObjectMgr->GetPlayerLevelInfo(player->getRace(true), player->getClass(), newLevel, &newLevelInfo);
+
+        for (uint8 i = STAT_STRENGTH; i < MAX_STATS; ++i)
+        {
+            const int32 minStatAmount = 5;
+            const int32 oldStatAmount = oldLevel == 1 ? minStatAmount : static_cast<int32>(oldLevelInfo.stats[i]);
+            const int32 newStatAmount = newLevel == 1 ? minStatAmount : static_cast<int32>(newLevelInfo.stats[i]);
+            attributesEarned += newStatAmount - oldStatAmount;
+        }
+    }
+
+    ChangePrestigePoints(player, attributesEarned);
+    ChatHandler(player->GetSession()).PSendSysMessage("You have gained {} Attribute Points!", attributesEarned);
 }
 
 void InitPrestigeExpTnl(Player* player)
@@ -923,7 +1091,7 @@ void InitPrestigeExpTnl(Player* player)
         return;
     }
 
-    //only alter stats if at max level
+    // Only alter stats if at max level
     if (player->GetLevel() == prestigeConfigSettings.GetIntendedMaxLevel())
     {
         //   2 - Exponential increase with rate. Total exp needed to level = base * (1 + ((prestigelvl*r)/100) * (pow(prestigelvl,2)/k))
@@ -999,7 +1167,7 @@ void SchedulePrestigeXpAddonUpdate(Player* player)
 
 void PrestigePlayerScript::OnPlayerGiveXP(Player* player, uint32& /*amount*/, Unit* /*victim*/, uint8 /*xpSource*/)
 {
-    if (!player)
+    if (!player || IsBot(player))
     {
         return;
     }
@@ -1017,10 +1185,9 @@ void PrestigePlayerScript::OnPlayerGiveXP(Player* player, uint32& /*amount*/, Un
     SchedulePrestigeXpAddonUpdate(player);
 }
 
-
 void PrestigePlayerScript::OnPlayerCalculateTalentsPoints(Player const* player, uint32& talentPointsForLevel)
 {
-    if (!prestigeConfigSettings.IsPrestigeEnabled() || !prestigeConfigSettings.CanAddPrestigeTalents())
+    if (!prestigeConfigSettings.IsPrestigeEnabled() || !prestigeConfigSettings.CanAddPrestigeTalents() || IsBot(player))
     {
         return;
     }
@@ -1046,39 +1213,41 @@ void PrestigeMainMenu(Player* player)
     {
         return;
     }
+
     if (!prestigeConfigSettings.IsPrestigeEnabled())
     {
         SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_DISABLED,player->GetGUID());
         return;
     }
+
     if(player->IsInCombat())
     {
         player->SendSystemMessage("You cannot change prestige stats while in combat!");
         return;
     }
-    if(player->GetLevel()<prestigeConfigSettings.GetIntendedMaxLevel())
+
+    if (prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL] > 0)
     {
-        player->SendSystemMessage(Acore::StringFormat("You cannot access the prestige system until you hit the max level of {}", prestigeConfigSettings.GetIntendedMaxLevel()));
-        return;
+        std::string optGetPrestigeLevel = Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Current Prestige Level: {} (click for details)", prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL]);
+        AddGossipItemFor(player, GOSSIP_ICON_DOT, optGetPrestigeLevel, GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_DISPLAY_CURRENT_STATS);
     }
-    std::string optGetPrestigeLevel = Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Current Prestige Level: {} (click for details)",prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL]);
-    AddGossipItemFor(player, GOSSIP_ICON_DOT, optGetPrestigeLevel, GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_DISPLAY_CURRENT_STATS);
+
     AddGossipItemFor(player, GOSSIP_ICON_DOT, Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t |cffFF0000{} |rAttribute(s) to spend.", GetPrestigeStatsToSpend(player)), GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Core Stats", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_CORE_STATS);
-    AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Secondary Stats", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_SECONDARY_STATS);
-    AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Defensive Stats", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_DEFENSIVE_STATS);
-    AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\TrainerGossipIcon:16|t Resistance Stats", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_RESISTANCE_STATS);
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\HealerGossipIcon:16|t Settings", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_SETTINGS);
+
     if (HasPrestigeStats(player))
     {
         AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\GossipFrame\\UnlearnGossipIcon:16|t Reset Attributes", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_RESET, "Are you sure you want to reset your attributes?", prestigeConfigSettings.GetResetCost(), false);
     }
-    //done to allow players to open the menu from anywhere while still having an id we can detect and close for OnEnterCombat()
-    //I am likely doing something incorrect here but this works for now
+
+    // Done to allow players to open the menu from anywhere while still having an id we can detect and close for OnEnterCombat()
+    // I am likely doing something incorrect here but this works for now
     player->PlayerTalkClass->GetGossipMenu().SetMenuId(PRESTIGE_MENU_ID);
     SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_GENERIC, player->GetGUID());
     return;
 }
+
 void PrestigeCoreStatsMenu(Player* player)
 {
     ClearGossipMenuFor(player);
@@ -1088,35 +1257,36 @@ void PrestigeCoreStatsMenu(Player* player)
         CloseGossipMenuFor(player);
         return;
     }
+
     AddGossipItemFor(player, GOSSIP_ICON_DOT, Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t |cffFF0000{} |rAttribute(s) to spend.", GetPrestigeStatsToSpend(player)), GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_CORE_STATS);
 
     std::string optStamina = 
         Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Stamina ({}) {}",
-        prestigeStats->stats[PRESTIGE_STAT_STAMINA] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) ? "|cff777777" : "|cff000000",
+        prestigeStats->stats[PRESTIGE_STAT_STAMINA] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) ? "|cff000000" : "|cff777777",
         Acore::StringFormat("{}/{}", prestigeStats->stats[PRESTIGE_STAT_STAMINA], prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA)),
         prestigeStats->stats[PRESTIGE_STAT_STAMINA] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STAMINA) ? "|cffFF0000(MAXED)|r" : "");
 
     std::string optStrength = 
         Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Strength ({}) {}",
-        prestigeStats->stats[PRESTIGE_STAT_STRENGTH] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) ? "|cff777777" : "|cff000000",
+        prestigeStats->stats[PRESTIGE_STAT_STRENGTH] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) ? "|cff000000" : "|cff777777",
         Acore::StringFormat("{}/{}", prestigeStats->stats[PRESTIGE_STAT_STRENGTH], prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH)),
         prestigeStats->stats[PRESTIGE_STAT_STRENGTH] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_STRENGTH) ? "|cffFF0000(MAXED)|r" : "");
 
     std::string optAgility = 
         Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Agility ({}) {}",
-        prestigeStats->stats[PRESTIGE_STAT_AGILITY] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) ? "|cff777777" : "|cff000000",
+        prestigeStats->stats[PRESTIGE_STAT_AGILITY] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) ? "|cff000000" : "|cff777777",
         Acore::StringFormat("{}/{}", prestigeStats->stats[PRESTIGE_STAT_AGILITY], prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY)),
         prestigeStats->stats[PRESTIGE_STAT_AGILITY] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_AGILITY) ? "|cffFF0000(MAXED)|r" : "");
 
     std::string optIntellect = 
         Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Intellect ({}) {}",
-        prestigeStats->stats[PRESTIGE_STAT_INTELLECT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) ? "|cff777777" : "|cff000000",
+        prestigeStats->stats[PRESTIGE_STAT_INTELLECT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) ? "|cff000000" : "|cff777777",
         Acore::StringFormat("{}/{}", prestigeStats->stats[PRESTIGE_STAT_INTELLECT], prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT)),
         prestigeStats->stats[PRESTIGE_STAT_INTELLECT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) ? "|cffFF0000(MAXED)|r" : "");
 
     std::string optSpirit = 
         Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Spirit ({}) {}",
-        prestigeStats->stats[PRESTIGE_STAT_SPIRIT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) ? "|cff777777" : "|cff000000",
+        prestigeStats->stats[PRESTIGE_STAT_SPIRIT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) ? "|cff000000" : "|cff777777",
         Acore::StringFormat("{}/{}", prestigeStats->stats[PRESTIGE_STAT_SPIRIT], prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT)),
         prestigeStats->stats[PRESTIGE_STAT_SPIRIT] >= prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) ? "|cffFF0000(MAXED)|r" : "");
 
@@ -1136,6 +1306,7 @@ void PrestigeCoreStatsMenu(Player* player)
         if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_INTELLECT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optIntellect, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_INTELLECT));
         if (prestigeConfigSettings.GetStatMaximum(PRESTIGE_STAT_SPIRIT) > 0) AddGossipItemFor(player, GOSSIP_ICON_DOT, optSpirit, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(PRESTIGE_STAT_SPIRIT));
     }
+
     AddGossipItemFor(player, GOSSIP_ICON_DOT, "|TInterface\\MONEYFRAME\\Arrow-Left-Down:16|t Back to main menu", GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
     SendGossipMenuFor(player, PRESTIGE_NPC_TEXT_HAS_ATTRIBUTES, player->GetGUID());
     return;
@@ -1150,6 +1321,7 @@ void PrestigeSecondaryStatsMenu(Player* player)
         CloseGossipMenuFor(player);
         return;
     }
+
     AddGossipItemFor(player, GOSSIP_ICON_DOT, Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t |cffFF0000{} |rAttribute(s) to spend.", GetPrestigeStatsToSpend(player)), GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_SECONDARY_STATS);
     
     std::string optSpellPower = 
@@ -1386,8 +1558,7 @@ void PrestigeResistanceStatsMenu(Player* player)
         return;
 }
 
-void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
-    uint32 menu_id, uint32 sender, uint32 action)
+void PrestigePlayerScript::OnPlayerGossipSelect(Player* player, uint32 menu_id, uint32 sender, uint32 action)
 {
     if (action == PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU)
     {
@@ -1420,27 +1591,32 @@ void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
         PrestigeCoreStatsMenu(player);
         return;
     }
+
     if (action == PRESTIGE_GOSSIP_ALLOCATE_SECONDARY_STATS)
     {
         PrestigeSecondaryStatsMenu(player);
         return;
     }
+
     if (action == PRESTIGE_GOSSIP_ALLOCATE_DEFENSIVE_STATS)
     {
         PrestigeDefensiveStatsMenu(player);
         return;
     }
+
     if (action == PRESTIGE_GOSSIP_ALLOCATE_RESISTANCE_STATS)
     {
         PrestigeResistanceStatsMenu(player);
         return;
     }
+
     if (action == PRESTIGE_GOSSIP_DISPLAY_CURRENT_STATS)
     {
         PrintPrestigeStats(player);
         PrestigeMainMenu(player);
         return;
     }
+
     if (action >= static_cast<uint32>(PRESTIGE_GOSSIP_STAT_AMOUNT_MENU_BASE)
         && action < PrestigeStatOpenMenuGossipAction(static_cast<uint32>(PRESTIGE_STAT_MAX)))
     {
@@ -1451,6 +1627,7 @@ void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
         }
         return;
     }
+
     if (action >= static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
         && action < static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE)
             + static_cast<uint32>(PRESTIGE_STAT_MAX) * static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT))
@@ -1458,6 +1635,7 @@ void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
         uint32 const rel = action - static_cast<uint32>(PRESTIGE_GOSSIP_BATCH_SPEND_BASE);
         uint32 const stat = rel / static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT);
         uint32 const tier = rel % static_cast<uint32>(PRESTIGE_SPEND_TIER_COUNT);
+
         if (!IsPrestigeSpendableStat(stat))
         {
             return;
@@ -1469,9 +1647,9 @@ void PrestigePlayerScript::OnPlayerGossipSelect(Player* player,
         PrestigeStatSpendAmountMenu(player, stat);
         return;
     }
+
     return;
 }
-
 
 void PrintPrestigeStats(Player* player)
 {
@@ -1481,6 +1659,7 @@ void PrintPrestigeStats(Player* player)
         player->SendSystemMessage("You do not have prestige stats!");
         return;
     }
+
     player->SendSystemMessage("Prestige Stat Points:");
     player->SendSystemMessage(Acore::StringFormat("Prestige Level: {}", prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL]));
     player->SendSystemMessage(Acore::StringFormat("Stamina: {}", prestigeStats->stats[PRESTIGE_STAT_STAMINA]));
@@ -1514,7 +1693,6 @@ void PrintPrestigeStats(Player* player)
     player->SendSystemMessage(Acore::StringFormat("Arcane Resistance: {}", prestigeStats->stats[PRESTIGE_STAT_RESIST_ARCANE]));
     player->SendSystemMessage(Acore::StringFormat("All Resistances: {}", prestigeStats->stats[PRESTIGE_STAT_RESIST_ALL]));
 }
-
 
 bool ChatCommandSendMainMenu(ChatHandler* handler)
 {
@@ -1626,6 +1804,7 @@ bool ChatCommandListPrestigeStats(ChatHandler* handler)
     PrintPrestigeStats(player);
     return true;
 }
+
 bool ChatCommandGrantPrestigeLevel(ChatHandler* handler)
 {
     Player* player = handler->GetPlayer();
@@ -1634,19 +1813,20 @@ bool ChatCommandGrantPrestigeLevel(ChatHandler* handler)
     {
         return true;
     }
+
     if (target->IsPlayer())
     {
         Player* targetPlayer = target->ToPlayer();
         auto prestigeStats = GetPrestigeStats(targetPlayer);
         if (!prestigeStats)
         {
-  return false;
+            return false;
         }
         else
         {
-  PrestigeLevelUp(targetPlayer);
-  player->SendSystemMessage(Acore::StringFormat("You have granted a prestige level to {}, bringing their total prestige level to {}", targetPlayer->GetName(), GetPrestigeLevel(targetPlayer)));
-  LOG_INFO("module", "GM {} has granted a prestige level to {}", player->GetName(), targetPlayer->GetName());
+            PrestigeLevelChange(targetPlayer, targetPlayer->GetLevel(), targetPlayer->GetLevel() + 1);
+            player->SendSystemMessage(Acore::StringFormat("You have granted a prestige level to {}, bringing their total prestige level to {}", targetPlayer->GetName(), GetPrestigeLevel(targetPlayer)));
+            LOG_INFO("module", "GM {} has granted a prestige level to {}", player->GetName(), targetPlayer->GetName());
         }
     }
     return true;
@@ -1660,26 +1840,27 @@ bool ChatCommandRemovePrestigeLevel(ChatHandler* handler)
     {
         return true;
     }
+
     if (target->IsPlayer())
     {
         Player* targetPlayer = target->ToPlayer();
         auto prestigeStats = GetPrestigeStats(targetPlayer);
         if (!prestigeStats)
         {
-  return false;
+            return false;
         }
         else
         {
-  auto prestigeStats = GetPrestigeStats(targetPlayer);
-  RespecPrestigeStats(prestigeStats);
-  prestigeStats->stats[PRESTIGE_STAT_UNALLOCATED]-=1;
-  prestigeStats->stats[PRESTIGE_STAT_PRESTIGELEVEL]-=1;
-  player->SendSystemMessage(Acore::StringFormat("You have removed a prestige level from {}, bringing their total prestige level to {}", targetPlayer->GetName(), GetPrestigeLevel(targetPlayer)));
-  LOG_INFO("module", "GM {} has removed a prestige level from {}", player->GetName(), targetPlayer->GetName());
+            auto prestigeStats = GetPrestigeStats(targetPlayer);
+            RespecPrestigeStats(prestigeStats);
+            PrestigeLevelChange(targetPlayer, targetPlayer->GetLevel(), targetPlayer->GetLevel() - 1);
+            player->SendSystemMessage(Acore::StringFormat("You have removed a prestige level from {}, bringing their total prestige level to {}", targetPlayer->GetName(), GetPrestigeLevel(targetPlayer)));
+            LOG_INFO("module", "GM {} has removed a prestige level from {}", player->GetName(), targetPlayer->GetName());
         }
     }
     return true;
 }
+
 void SC_AddPrestigeScripts()
 {
     new PrestigeWorldScript();

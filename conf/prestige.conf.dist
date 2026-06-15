@@ -60,33 +60,34 @@ Prestige.DisablePvP = 1
 #       Keep in mind that Prestige.Max * Prestige.StatPerPoint CANNOT be greater than 65,536.
 #           ex: if Prestige.Max.Stamina = 100 and Prestige.StatPerPoint.Stamina = 700, you will have errors due to overflow
 #
-Prestige.Max.Stamina = 50
-Prestige.Max.Strength = 50
-Prestige.Max.Agility = 50
-Prestige.Max.Intellect = 50
-Prestige.Max.Spirit = 50
-Prestige.Max.SpellPower = 40
-Prestige.Max.DefenseRating = 50
-Prestige.Max.DodgeRating = 50
-Prestige.Max.ParryRating = 50
-Prestige.Max.BlockRating = 50
-Prestige.Max.BlockValue = 50
-Prestige.Max.CritRating = 50
-Prestige.Max.HitRating = 50
-Prestige.Max.ExpertiseRating = 50
-Prestige.Max.HasteRating = 50
-Prestige.Max.ArmorPenRating = 30
-Prestige.Max.ResilRating = 50
-Prestige.Max.AttackPower = 40
-Prestige.Max.BonusArmor = 50
-Prestige.Max.SpellPen = 50
-Prestige.Max.Mp5 = 50
-Prestige.Max.ResistFire = 50
-Prestige.Max.ResistFrost = 50
-Prestige.Max.ResistNature = 50
-Prestige.Max.ResistShadow = 50
-Prestige.Max.ResistArcane = 50
-Prestige.Max.ResistAll = 30
+
+Prestige.Max.Stamina = 350
+Prestige.Max.Strength = 350
+Prestige.Max.Agility = 350
+Prestige.Max.Intellect = 350
+Prestige.Max.Spirit = 350
+Prestige.Max.SpellPower = 350
+Prestige.Max.DefenseRating = 350
+Prestige.Max.DodgeRating = 350
+Prestige.Max.ParryRating = 350
+Prestige.Max.BlockRating = 350
+Prestige.Max.BlockValue = 350
+Prestige.Max.CritRating = 350
+Prestige.Max.HitRating = 350
+Prestige.Max.ExpertiseRating = 350
+Prestige.Max.HasteRating = 350
+Prestige.Max.ArmorPenRating = 350
+Prestige.Max.ResilRating = 350
+Prestige.Max.AttackPower = 350
+Prestige.Max.BonusArmor = 350
+Prestige.Max.SpellPen = 350
+Prestige.Max.Mp5 = 350
+Prestige.Max.ResistFire = 350
+Prestige.Max.ResistFrost = 350
+Prestige.Max.ResistNature = 350
+Prestige.Max.ResistShadow = 350
+Prestige.Max.ResistArcane = 350
+Prestige.Max.ResistAll = 350
 
 #
 #    Prestige.Max.*
@@ -96,33 +97,36 @@ Prestige.Max.ResistAll = 30
 #       Keep in mind that Prestige.Max * Prestige.StatPerPoint CANNOT be greater than 65,536.
 #           ex: if Prestige.Max.Stamina = 100 and Prestige.StatPerPoint.Stamina = 700, you will have errors due to overflow
 #
-Prestige.StatPerPoint.Stamina = 3
-Prestige.StatPerPoint.Strength = 3
-Prestige.StatPerPoint.Agility = 3
-Prestige.StatPerPoint.Intellect = 3
-Prestige.StatPerPoint.Spirit = 3
-Prestige.StatPerPoint.SpellPower = 5
-Prestige.StatPerPoint.DefenseRating = 5
-Prestige.StatPerPoint.DodgeRating = 5
-Prestige.StatPerPoint.ParryRating = 5
-Prestige.StatPerPoint.BlockRating = 5
-Prestige.StatPerPoint.BlockValue = 3
-Prestige.StatPerPoint.CritRating = 5
-Prestige.StatPerPoint.HitRating = 5
-Prestige.StatPerPoint.ExpertiseRating = 5
-Prestige.StatPerPoint.HasteRating = 5
-Prestige.StatPerPoint.ArmorPenRating = 4
-Prestige.StatPerPoint.ResilRating = 5
-Prestige.StatPerPoint.AttackPower = 5
-Prestige.StatPerPoint.BonusArmor = 15
-Prestige.StatPerPoint.SpellPen = 5
-Prestige.StatPerPoint.Mp5 = 5
-Prestige.StatPerPoint.ResistFire = 5
-Prestige.StatPerPoint.ResistFrost = 5
-Prestige.StatPerPoint.ResistNature = 5
-Prestige.StatPerPoint.ResistShadow = 5
-Prestige.StatPerPoint.ResistArcane = 5
-Prestige.StatPerPoint.ResistAll = 3
+
+Prestige.StatPerPoint.Stamina = 1
+Prestige.StatPerPoint.Strength = 1
+Prestige.StatPerPoint.Agility = 1
+Prestige.StatPerPoint.Intellect = 1
+Prestige.StatPerPoint.Spirit = 1
+Prestige.StatPerPoint.SpellPower = 1
+Prestige.StatPerPoint.DefenseRating = 1
+Prestige.StatPerPoint.DodgeRating = 1
+Prestige.StatPerPoint.ParryRating = 1
+Prestige.StatPerPoint.BlockRating = 1
+Prestige.StatPerPoint.BlockValue = 1
+Prestige.StatPerPoint.CritRating = 1
+Prestige.StatPerPoint.HitRating = 1
+Prestige.StatPerPoint.ExpertiseRating = 1
+Prestige.StatPerPoint.HasteRating = 1
+Prestige.StatPerPoint.ArmorPenRating = 1
+Prestige.StatPerPoint.ResilRating = 1
+Prestige.StatPerPoint.AttackPower = 1
+Prestige.StatPerPoint.BonusArmor = 1
+Prestige.StatPerPoint.SpellPen = 1
+Prestige.StatPerPoint.Mp5 = 1
+Prestige.StatPerPoint.ResistFire = 1
+Prestige.StatPerPoint.ResistFrost = 1
+Prestige.StatPerPoint.ResistNature = 1
+Prestige.StatPerPoint.ResistShadow = 1
+Prestige.StatPerPoint.ResistArcane = 1
+Prestige.StatPerPoint.ResistAll = 1
+
+
 
 ########################################
 # Prestige Level Exp Formula
@@ -157,6 +161,8 @@ Prestige.LevelUpFormula.r = 1
 #    
 Prestige.LevelUpFormula.k = 1
 
+
+
 ########################################
 # Prestige Talents
 ########################################
@@ -165,4 +171,5 @@ Prestige.LevelUpFormula.k = 1
 #        Description: Give the amount of talent points per prestige level gained
 #		 Default: 0
 #
-Prestige.Talents = 0
+
+Prestige.Talents = 1

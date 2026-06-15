@@ -92,7 +92,13 @@ enum PrestigeConstants
     STAT_SPELL_RESIST_NATURE_256 = 90050,
     STAT_SPELL_RESIST_SHADOW_256 = 90051,
     STAT_SPELL_RESIST_ARCANE_256 = 90052,
-    STAT_SPELL_RESIST_ALL_256 = 90053
+    STAT_SPELL_RESIST_ALL_256 = 90053,
+
+    STAT_SPELL_STAMINA_NEGATIVE = 90054,
+    STAT_SPELL_AGILITY_NEGATIVE = 90055,
+    STAT_SPELL_INTELLECT_NEGATIVE = 90056,
+    STAT_SPELL_STRENGTH_NEGATIVE = 90057,
+    STAT_SPELL_SPIRIT_NEGATIVE = 90058
 };
 
 struct PrestigeStatData
@@ -332,13 +338,15 @@ PrestigeStatData prestigeStatData[PRESTIGE_STAT_MAX];
 
 std::unordered_map<uint64, PrestigeStats> prestigeStatMap;
 
-void AddPrestigePoint(Player* /*player*/);
+bool IsBot(const Player* /*player*/);
+void AddPrestigePoint(Player* /*player*/, int32 points);
 PrestigeStats* GetPrestigeStats(const Player* /*player*/);
 void ClearPrestigeStats();
 void LoadPrestigeStats();
 PrestigeStats* LoadPrestigeStatsForPlayer(Player* /*player*/);
 void SavePrestigeStats();
 void SavePrestigeStatsForPlayer(Player* /*player*/);
+void ApplyReverseCharacterBaseStats(Player* /*player*/);
 void ApplyPrestigeStats(Player* /*player*/, PrestigeStats* /*attributes*/);
 void DisablePrestigeStats(Player* /*player*/);
 bool TryAddPrestigeStat(PrestigeStats* /*attributes*/, uint32 /*attribute*/);
@@ -367,7 +375,7 @@ bool ChatCommandListPrestigeStats(ChatHandler* /*handler*/);
 bool ChatCommandGrantPrestigeLevel(ChatHandler* /*handler*/);
 bool ChatCommandRemovePrestigeLevel(ChatHandler* /*handler*/);
 
-void PrestigeLevelUp(Player* /*player*/);
+void PrestigeLevelChange(Player* /*player*/, uint8 oldLevel, uint8 newLevel);
 void InitPrestigeExpTnl(Player* /*player*/);
 void SendPrestigeXpAddonUpdate(Player* /*player*/);
 void SchedulePrestigeXpAddonUpdate(Player* /*player*/);
