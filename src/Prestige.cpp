@@ -79,6 +79,12 @@ void PrestigePlayerScript::OnPlayerLogout(Player* player)
     SavePrestigeStatsForPlayer(player);
 }
 
+
+void PrestigePlayerScript::OnPlayerDelete(ObjectGuid guid, uint32 accountId)
+{
+    CharacterDatabase.Execute("DELETE FROM `character_prestige_stats` WHERE guid ={}", guid);
+}
+
 /*called when a player gains a prestige level via onlevelchanged, kept seperate incase we decide to have bonuses outside of prestige level*/
 void ChangePrestigePoints(Player* player, int32 points)
 {
@@ -721,6 +727,16 @@ void PrestigeStatSpendAmountMenu(Player* player, uint32 stat)
 
     std::string const statName = StatNames[stat];
     bool const confirm = IsConfirmationToSpendStatPointsEnabled(player, SETTING_CONFIRM_SPEND);
+
+    AddGossipItemFor(player, GOSSIP_ICON_DOT, Acore::StringFormat("|TInterface\\GossipFrame\\TrainerGossipIcon:16|t |cffFF0000{} |rAttribute(s) to spend.", GetPrestigeStatsToSpend(player)), GOSSIP_SENDER_MAIN, PRESTIGE_GOSSIP_ALLOCATE_MAIN_MENU);
+
+    std::string optStamina =
+        Acore::StringFormat("|TInterface\\MINIMAP\\UI-Minimap-ZoomInButton-Up:16|t {}Stamina ({}) {}",
+            prestigeStats->stats[stat] >= prestigeConfigSettings.GetStatMaximum(stat) ? "|cff000000" : "|cff777777",
+            Acore::StringFormat("{}/{}", prestigeStats->stats[stat], prestigeConfigSettings.GetStatMaximum(stat)),
+            prestigeStats->stats[stat] >= prestigeConfigSettings.GetStatMaximum(stat) ? "|cffFF0000(MAXED)|r" : "");
+
+    AddGossipItemFor(player, GOSSIP_ICON_DOT, optStamina, GOSSIP_SENDER_MAIN, PrestigeStatOpenMenuGossipAction(stat));
 
     static uint32 const tierAmounts[] = { 1, 2, 5, 10, 25, UINT32_MAX };
     static char const* const tierLabels[] = { "+1", "+2", "+5", "+10", "+25", "Max (to cap)" };
@@ -1409,7 +1425,6 @@ void PrestigeSecondaryStatsMenu(Player* player)
     return;
 }
 
-
 void PrestigeDefensiveStatsMenu(Player* player)
 {
     ClearGossipMenuFor(player);
@@ -1719,6 +1734,7 @@ void PrestigePlayerScript::HandlePrestigeStatAllocation(Player* player, uint32 s
     {
         return;
     }
+
     auto prestigeStats = GetPrestigeStats(player);
     if (!prestigeStats)
     {
@@ -1755,10 +1771,10 @@ void PrestigePlayerScript::HandlePrestigeStatAllocation(Player* player, uint32 s
         }
         if (added < amount && amount != UINT32_MAX)
         {
-            ChatHandler(player->GetSession()).SendSysMessage(
-                Acore::StringFormat("Added {} point(s) (capped by unspent points or stat maximum).", added));
+            ChatHandler(player->GetSession()).SendSysMessage(Acore::StringFormat("Added {} point(s) (capped by unspent points or stat maximum).", added));
         }
     }
+
     DisablePrestigeStats(player);
     ApplyPrestigeStats(player, prestigeStats);
     player->UpdateAllStats();
