@@ -229,7 +229,7 @@ void ClearPrestigeStats()
 
 void LoadPrestigeStats()
 {
-    auto qResult = Query("SELECT * FROM character_prestige_stats");
+    auto qResult = CharacterDatabase.Query("SELECT * FROM character_prestige_stats");
     if (!qResult)
     {
         LOG_ERROR("module", "Failed to load from 'character_prestige_stats' table.");
@@ -266,7 +266,7 @@ PrestigeStats* LoadPrestigeStatsForPlayer(Player* player)
     }
 
     auto guid = player->GetGUID().GetRawValue();
-    auto qResult = Query("SELECT * FROM character_prestige_stats WHERE guid = {}", guid);
+    auto qResult = CharacterDatabase.Query("SELECT * FROM character_prestige_stats WHERE guid = {}", guid);
 
     if (!qResult)
     {
