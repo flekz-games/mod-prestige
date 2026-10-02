@@ -82,7 +82,7 @@ void PrestigePlayerScript::OnPlayerLogout(Player* player)
 
 void PrestigePlayerScript::OnPlayerDelete(ObjectGuid guid, uint32 accountId)
 {
-    CharacterDatabase.Execute("DELETE FROM `character_prestige_stats` WHERE guid ={}", guid);
+    CharacterDatabase.Execute("DELETE FROM `character_prestige_stats` WHERE guid ={}", guid.GetRawValue());
 }
 
 /*called when a player gains a prestige level via onlevelchanged, kept seperate incase we decide to have bonuses outside of prestige level*/
@@ -229,7 +229,7 @@ void ClearPrestigeStats()
 
 void LoadPrestigeStats()
 {
-    auto qResult = CharacterDatabase.Query("SELECT * FROM character_prestige_stats");
+    auto qResult = Query("SELECT * FROM character_prestige_stats");
     if (!qResult)
     {
         LOG_ERROR("module", "Failed to load from 'character_prestige_stats' table.");
@@ -266,7 +266,7 @@ PrestigeStats* LoadPrestigeStatsForPlayer(Player* player)
     }
 
     auto guid = player->GetGUID().GetRawValue();
-    auto qResult = CharacterDatabase.Query("SELECT * FROM character_prestige_stats WHERE guid = {}", guid);
+    auto qResult = Query("SELECT * FROM character_prestige_stats WHERE guid = {}", guid);
 
     if (!qResult)
     {
